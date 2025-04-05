@@ -4,8 +4,8 @@
 
 using ArgusReduxCore.NetworkUDP;
 using Microsoft.Extensions.Logging;
+using System.Net;
 using System.Net.Sockets;
-using System.Runtime.InteropServices;
 
 namespace ArgusReduxCore
 {
@@ -69,6 +69,9 @@ namespace ArgusReduxCore
 					INetworkMessage? message = null;
 					switch (messageType)
 					{
+						case MessageType.Discovery:
+							SendSimpleMessage(MessageType.Hello, result.RemoteEndPoint);
+							break;
 						case MessageType.SensorData:
 							message = SensorDataMessage.Parse(content.Span);
 							break;
@@ -106,6 +109,21 @@ namespace ArgusReduxCore
 				}
 			}
 			return crc;
+		}
+
+		public void SendSimpleMessage(MessageType type, IPEndPoint endpoint)
+		{
+			try
+			{
+				var message = new byte[2];
+				message[0] = (byte)type;
+				message[1] = CalculateCrc8(message.AsSpan(0, 1)); // A bit silly, but whatever works.
+				_udpClient.Send(message, message.Length, endpoint);
+			}
+			catch (SocketException ex)
+			{
+				_logger?.LogError(ex, "Failed to send UDP message");
+			}
 		}
 	}
 
