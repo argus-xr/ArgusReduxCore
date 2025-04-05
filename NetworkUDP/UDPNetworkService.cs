@@ -4,10 +4,8 @@
 
 using ArgusReduxCore.NetworkUDP;
 using Microsoft.Extensions.Logging;
-using System;
 using System.Net.Sockets;
-using System.Threading;
-using System.Threading.Tasks;
+using System.Runtime.InteropServices;
 
 namespace ArgusReduxCore
 {
@@ -46,14 +44,68 @@ namespace ArgusReduxCore
 				while (!_cancellationTokenSource.IsCancellationRequested)
 				{
 					var result = await _udpClient.ReceiveAsync();
-					var packet = SensorDataMessage.Parse(new ReadOnlySpan<byte>(result.Buffer));
-					if (packet != null)
+					var buffer = result.Buffer;
+
+					if (buffer.Length < 2) // Need at least 2 bytes: type and crc
 					{
-						_logger?.LogDebug("Received data: {Data}", BitConverter.ToString(result.Buffer));
-						OnPacketReceived?.Invoke(packet);
+						_logger?.LogWarning("Received packet too short to be valid.");
+						continue;
+					}
+
+					var messageType = (MessageType)buffer[0];
+					var content = new ReadOnlyMemory<byte>(buffer, 1, buffer.Length - 2);
+					var receivedCrc = buffer[buffer.Length - 1];
+
+					var calculatedCrc = CalculateCrc8(buffer.AsSpan(0, buffer.Length - 1));
+
+					if (receivedCrc != calculatedCrc)
+					{
+						_logger?.LogWarning($"CRC mismatch. Received: {receivedCrc}, Calculated: {calculatedCrc}");
+						continue;
+					}
+
+					_logger?.LogDebug("Received data: {Data}", BitConverter.ToString(buffer));
+
+					INetworkMessage? message = null;
+					switch (messageType)
+					{
+						case MessageType.SensorData:
+							message = SensorDataMessage.Parse(content.Span);
+							break;
+						// Add other message types here as needed
+						default:
+							_logger?.LogWarning($"Unknown message type: {messageType}");
+							break;
+					}
+
+					if (message != null)
+					{
+						OnPacketReceived?.Invoke(message);
 					}
 				}
 			});
+		}
+
+		private static byte CalculateCrc8(ReadOnlySpan<byte> data)
+		{
+			// Simple CRC-8 implementation (polynomial 0xD5)
+			byte crc = 0;
+			foreach (byte b in data)
+			{
+				crc ^= b;
+				for (int i = 0; i < 8; i++)
+				{
+					if ((crc & 0x80) != 0)
+					{
+						crc = (byte)((crc << 1) ^ 0xD5);
+					}
+					else
+					{
+						crc <<= 1;
+					}
+				}
+			}
+			return crc;
 		}
 	}
 

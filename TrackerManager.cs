@@ -8,7 +8,12 @@ using System.Collections.Generic;
 
 namespace ArgusReduxCore
 {
-	public class TrackerManager
+	public interface ITrackerManager
+	{
+		void HandleMessage(INetworkMessage message);
+	}
+
+	public class TrackerManager : ITrackerManager
 	{
 		private readonly ConcurrentDictionary<ulong, Tracker> _trackers = new();
 
