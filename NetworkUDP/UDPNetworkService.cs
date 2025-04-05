@@ -4,7 +4,10 @@
 
 using ArgusReduxCore.NetworkUDP;
 using Microsoft.Extensions.Logging;
+using System;
 using System.Net.Sockets;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace ArgusReduxCore
 {
@@ -43,7 +46,7 @@ namespace ArgusReduxCore
 				while (!_cancellationTokenSource.IsCancellationRequested)
 				{
 					var result = await _udpClient.ReceiveAsync();
-					var packet = SensorDataMessage.Parse(result.Buffer);
+					var packet = SensorDataMessage.Parse(new ReadOnlySpan<byte>(result.Buffer));
 					if (packet != null)
 					{
 						_logger?.LogDebug("Received data: {Data}", BitConverter.ToString(result.Buffer));

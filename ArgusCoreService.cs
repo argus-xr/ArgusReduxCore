@@ -2,6 +2,7 @@
 using ArgusReduxCore.NetworkUDP;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using System;
 
 namespace ArgusReduxCore
 {
@@ -17,17 +18,6 @@ namespace ArgusReduxCore
 
             // Allow the caller to configure additional services
             configureServices?.Invoke(services);
-
-            // Check if logging is already configured
-            if (!services.Any(descriptor => descriptor.ServiceType == typeof(ILoggerFactory)))
-            {
-                // Add default console logging
-                services.AddLogging(loggingBuilder =>
-                {
-                    loggingBuilder.AddConsole();
-                    loggingBuilder.SetMinimumLevel(LogLevel.Debug);
-                });
-            }
 
             // Build the service provider
             return services.BuildServiceProvider();
