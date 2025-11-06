@@ -33,7 +33,7 @@ namespace ArgusReduxCore
                 // Create the NetworkMessageReceiver with the resolved dependency
                 return new UDPNetworkService(logger);
             });
-            services.AddSingleton<TrackerManager>();
+            services.AddSingleton<ITrackerManager, TrackerManager>();
         }
     }
 }
