@@ -1,4 +1,4 @@
-﻿using ArgusReduxCore.NetworkUDP;
+using ArgusReduxCore.NetworkUDP;
 using Microsoft.Extensions.Logging;
 using System.Net;
 using System.Net.Sockets;
@@ -8,10 +8,11 @@ namespace ArgusReduxCore
 {
     public interface IUDPNetworkService
     {
-        public delegate void PacketReceivedHandler(INetworkMessage message);
+        public delegate void PacketReceivedHandler(INetworkMessage message, IPEndPoint remoteEndPoint);
         event PacketReceivedHandler? OnPacketReceived;
 
         public void StartListening();
+        void SendSimpleMessage(MessageType type, IPEndPoint endpoint);
     }
 
     public class UDPNetworkService : IUDPNetworkService
@@ -118,10 +119,6 @@ namespace ArgusReduxCore
                         using var stream = new MemoryStream(content);
                         message = _messageParsers[messageType](stream);
                     }
-                    else if (messageType == MessageType.Discovery)
-                    {
-                        SendSimpleMessage(MessageType.Hello, result.RemoteEndPoint);
-                    }
                     else
                     {
                         _logger?.LogWarning($"Unknown message type: {messageType}");
@@ -129,7 +126,7 @@ namespace ArgusReduxCore
 
                     if (message != null)
                     {
-                        OnPacketReceived?.Invoke(message);
+                        OnPacketReceived?.Invoke(message, result.RemoteEndPoint);
                     }
                 }
             });
