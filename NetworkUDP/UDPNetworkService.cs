@@ -3,6 +3,12 @@ using Microsoft.Extensions.Logging;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Collections.Concurrent;
+using System;
+using System.Threading.Tasks;
+using System.Threading;
+using System.Linq;
+using System.Collections.Generic;
 
 namespace ArgusReduxCore
 {
@@ -24,6 +30,7 @@ namespace ArgusReduxCore
         private const int _port = 4210;
         private const string ReplyMessage = "ARGUS_REPLY";
         private const int MaxUdpPacketSize = 512;
+        private readonly ConcurrentDictionary<IPEndPoint, DateTime> _endpointLastMessageTime = new();
 
         public event IUDPNetworkService.PacketReceivedHandler? OnPacketReceived;
 
@@ -38,6 +45,7 @@ namespace ArgusReduxCore
 
             // Discover and register message parsers
             RegisterMessageParsers();
+            StartHeartbeatTask();
         }
 
         private void RegisterMessageParsers()
@@ -132,6 +140,27 @@ namespace ArgusReduxCore
             });
         }
 
+        private void StartHeartbeatTask()
+        {
+            Task.Run(async () =>
+            {
+                while (!_cancellationTokenSource.IsCancellationRequested)
+                {
+                    await Task.Delay(1000); // Check every second
+                    foreach (var endpoint in _endpointLastMessageTime.Keys)
+                    {
+                        if (_endpointLastMessageTime.TryGetValue(endpoint, out var lastTime))
+                        {
+                            if (DateTime.UtcNow - lastTime > TimeSpan.FromSeconds(2))
+                            {
+                                SendSimpleMessage(MessageType.Heartbeat, endpoint);
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
         private static byte CalculateCrc8(ReadOnlySpan<byte> data)
         {
             // Simple CRC-8 implementation (polynomial 0xD5)
@@ -156,12 +185,14 @@ namespace ArgusReduxCore
 
         public void SendSimpleMessage(MessageType type, IPEndPoint endpoint)
         {
+            // Apparently thread-safe, according to Gemini.
             try
             {
                 var message = new byte[2];
                 message[0] = (byte)type;
                 message[1] = CalculateCrc8(message.AsSpan(0, 1)); // A bit silly, but whatever works.
                 _udpClient.Send(message, message.Length, endpoint);
+                _endpointLastMessageTime[endpoint] = DateTime.UtcNow;
             }
             catch (SocketException ex)
             {
