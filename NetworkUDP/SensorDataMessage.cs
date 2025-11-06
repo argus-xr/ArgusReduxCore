@@ -1,9 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Runtime.InteropServices;
 
 namespace ArgusReduxCore.NetworkUDP
 {
+    [MessageType(MessageType.SensorData)]
     public class SensorDataMessage : INetworkMessage
     {
         public MessageType MessageType => MessageType.SensorData;
@@ -12,33 +14,49 @@ namespace ArgusReduxCore.NetworkUDP
         public List<IMUSample> IMUData = new();
         public byte[]? JpegImageBytes;
 
-        public static SensorDataMessage? Parse(ReadOnlySpan<byte> data)
+        public void Read(Stream stream)
         {
-            if (data.Length < PacketHeader.Size)
-                return null;
-
-            var packet = new SensorDataMessage();
-
-            // Use MemoryMarshal to directly access the struct from the byte span
-            packet.Header = MemoryMarshal.Read<PacketHeader>(data);
-
-            int offset = PacketHeader.Size;
-            for (int i = 0; i < packet.Header.ImuCount; i++)
+            if (stream.Length < PacketHeader.Size)
             {
-                if (offset + IMUSample.Size > data.Length)
+                Console.WriteLine("Warning: Insufficient data for PacketHeader.");
+                return;
+            }
+
+            // Read the header
+            byte[] headerBytes = new byte[PacketHeader.Size];
+            stream.Read(headerBytes, 0, PacketHeader.Size);
+            Header = MemoryMarshal.Read<PacketHeader>(headerBytes.AsSpan());
+
+            // Read the IMU samples
+            for (int i = 0; i < Header.ImuCount; i++)
+            {
+                if (stream.Position + IMUSample.Size > stream.Length)
+                {
+                    Console.WriteLine($"Warning: Insufficient data for IMUSample {i}.");
                     break;
-                // Use MemoryMarshal to directly access the struct from the byte span
-                var sample = MemoryMarshal.Read<IMUSample>(data.Slice(offset));
-                packet.IMUData.Add(sample);
-                offset += IMUSample.Size;
+                }
+                byte[] sampleBytes = new byte[IMUSample.Size];
+                stream.Read(sampleBytes, 0, IMUSample.Size);
+                var sample = MemoryMarshal.Read<IMUSample>(sampleBytes.AsSpan());
+                IMUData.Add(sample);
             }
 
-            if (packet.Header.ImageSize > 0 && offset + (int)packet.Header.ImageSize <= data.Length)
+            // Read the JPEG image
+            if (Header.ImageSize > 0)
             {
-                packet.JpegImageBytes = data.Slice(offset, (int)packet.Header.ImageSize).ToArray();
+                if (stream.Position + Header.ImageSize > stream.Length)
+                {
+                    Console.WriteLine("Warning: Insufficient data for JPEG image.");
+                    JpegImageBytes = null;
+                    return;
+                }
+                JpegImageBytes = new byte[Header.ImageSize];
+                stream.Read(JpegImageBytes, 0, (int)Header.ImageSize);
             }
-
-            return packet;
+            else
+            {
+                JpegImageBytes = null;
+            }
         }
     }
 
@@ -54,15 +72,15 @@ namespace ArgusReduxCore.NetworkUDP
         public uint ImageSize;
     }
 
-	[StructLayout(LayoutKind.Sequential, Pack = 1)]
-	public struct IMUSample
-	{
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct IMUSample
+    {
         public const int Size = 10;
 
-		public uint TimestampUs;
-		[MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
-		public short[] Accel;
-		[MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
-		public short[] Gyro;
-	}
+        public uint TimestampUs;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
+        public short[] Accel;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
+        public short[] Gyro;
+    }
 }
