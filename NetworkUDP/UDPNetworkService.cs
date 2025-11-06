@@ -16,6 +16,7 @@ namespace ArgusReduxCore
     {
         public delegate void PacketReceivedHandler(INetworkMessage message, IPEndPoint remoteEndPoint);
         event PacketReceivedHandler? OnPacketReceived;
+        event Action<IPEndPoint>? OnEndpointDisconnected;
 
         public void StartListening();
         void SendSimpleMessage(MessageType type, IPEndPoint endpoint);
@@ -31,8 +32,10 @@ namespace ArgusReduxCore
         private const string ReplyMessage = "ARGUS_REPLY";
         private const int MaxUdpPacketSize = 512;
         private readonly ConcurrentDictionary<IPEndPoint, DateTime> _endpointLastMessageTime = new();
+        private readonly ConcurrentDictionary<IPEndPoint, DateTime> _endpointLastReceivedTime = new();
 
         public event IUDPNetworkService.PacketReceivedHandler? OnPacketReceived;
+        public event Action<IPEndPoint>? OnEndpointDisconnected;
 
         // Dictionary to store message parsers based on MessageType
         private readonly Dictionary<MessageType, Func<Stream, INetworkMessage?>> _messageParsers = new();
@@ -135,6 +138,7 @@ namespace ArgusReduxCore
                     if (message != null)
                     {
                         OnPacketReceived?.Invoke(message, result.RemoteEndPoint);
+                        _endpointLastReceivedTime[result.RemoteEndPoint] = DateTime.UtcNow;
                     }
                 }
             });
@@ -147,6 +151,8 @@ namespace ArgusReduxCore
                 while (!_cancellationTokenSource.IsCancellationRequested)
                 {
                     await Task.Delay(1000); // Check every second
+
+                    // Check for outgoing heartbeats
                     foreach (var endpoint in _endpointLastMessageTime.Keys)
                     {
                         if (_endpointLastMessageTime.TryGetValue(endpoint, out var lastTime))
@@ -154,6 +160,21 @@ namespace ArgusReduxCore
                             if (DateTime.UtcNow - lastTime > TimeSpan.FromSeconds(2))
                             {
                                 SendSimpleMessage(MessageType.Heartbeat, endpoint);
+                            }
+                        }
+                    }
+
+                    // Check for disconnected endpoints
+                    foreach (var endpoint in _endpointLastReceivedTime.Keys)
+                    {
+                        if (_endpointLastReceivedTime.TryGetValue(endpoint, out var lastReceivedTime))
+                        {
+                            if (DateTime.UtcNow - lastReceivedTime > TimeSpan.FromSeconds(10))
+                            {
+                                _logger?.LogInformation($"Endpoint {endpoint} disconnected due to inactivity.");
+                                _endpointLastReceivedTime.TryRemove(endpoint, out _);
+                                _endpointLastMessageTime.TryRemove(endpoint, out _);
+                                OnEndpointDisconnected?.Invoke(endpoint);
                             }
                         }
                     }
