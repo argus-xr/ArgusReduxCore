@@ -6,10 +6,14 @@ namespace ArgusReduxCore.NetworkUDP
     public class DiscoveryMessage : INetworkMessage
     {
         public MessageType MessageType => MessageType.Discovery;
+        public ulong Uid { get; private set; }
 
         public void Read(Stream stream)
         {
-            // No data to read for a discovery message
+            using (var reader = new BinaryReader(stream))
+            {
+                Uid = reader.ReadUInt64();
+            }
         }
     }
 }

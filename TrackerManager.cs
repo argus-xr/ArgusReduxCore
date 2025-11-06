@@ -17,6 +17,7 @@ namespace ArgusReduxCore
 	public class TrackerManager : ITrackerManager
 	{
 		private readonly ConcurrentDictionary<ulong, Tracker> _trackers = new();
+		private readonly ConcurrentDictionary<System.Net.IPEndPoint, ulong> _endpointToUid = new();
 		private readonly IUDPNetworkService _networkService;
 
 		public event Action<Tracker>? OnTrackerAdded;
@@ -29,22 +30,27 @@ namespace ArgusReduxCore
 
 		public void HandleMessage(INetworkMessage message, System.Net.IPEndPoint remoteEndPoint)
 		{
-			if (message is DiscoveryMessage)
+			if (message is DiscoveryMessage discoveryMessage)
 			{
+				_endpointToUid[remoteEndPoint] = discoveryMessage.Uid;
 				_networkService.SendSimpleMessage(MessageType.Hello, remoteEndPoint);
-			}
-			else if (message is SensorDataMessage trackerPacket)
-			{
-				// Temporary ID logic (replace with UID-based logic when available)
-				ulong key = 1;
 
-				var tracker = _trackers.GetOrAdd(key, _ => {
-					var t = new Tracker(key);
+				_trackers.GetOrAdd(discoveryMessage.Uid, uid =>
+				{
+					var t = new Tracker(uid);
 					OnTrackerAdded?.Invoke(t);
 					return t;
 				});
-
-				tracker.HandlePacket(trackerPacket);
+			}
+			else if (message is SensorDataMessage trackerPacket)
+			{
+				if (_endpointToUid.TryGetValue(remoteEndPoint, out var uid))
+				{
+					if (_trackers.TryGetValue(uid, out var tracker))
+					{
+						tracker.HandlePacket(trackerPacket);
+					}
+				}
 			}
 		}
 	}
