@@ -8,5 +8,6 @@
 		Heartbeat		= 0x03,
 		SetupConfig		= 0x04,
 		SensorData		= 0x05,
+		ImageChunk		= 0x06,
 	}
 }

@@ -224,6 +224,7 @@ namespace ArgusReduxCore
 
 	public interface INetworkMessage
 	{
+        ushort Length { get; }
 		MessageType MessageType { get; }
 		void Read(Stream stream);
 	}

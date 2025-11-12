@@ -7,9 +7,11 @@ namespace ArgusReduxCore.NetworkUDP
     {
         public MessageType MessageType => MessageType.Discovery;
         public ulong Uid { get; private set; }
+        public ushort Length { get; private set; }
 
         public void Read(Stream stream)
         {
+            Length = (ushort)stream.Length;
             using (var reader = new BinaryReader(stream))
             {
                 Uid = reader.ReadUInt64();

@@ -14,8 +14,11 @@ namespace ArgusReduxCore.NetworkUDP
         public List<IMUSample> IMUData = new();
         public byte[]? JpegImageBytes;
 
+        public ushort Length { get; private set; }
+
         public void Read(Stream stream)
         {
+            Length = (ushort) stream.Length;
             if (stream.Length < PacketHeader.Size)
             {
                 Console.WriteLine("Warning: Insufficient data for PacketHeader.");
