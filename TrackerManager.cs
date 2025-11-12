@@ -157,6 +157,8 @@ namespace ArgusReduxCore
         private List<SensorDataMessage> _history = new();
         private readonly ConcurrentDictionary<uint, ImageReconstructor> _imageReconstructors = new();
         private readonly ConcurrentDictionary<uint, uint> _frameTotalSizes = new();
+        private readonly ConcurrentDictionary<uint, ConcurrentBag<ImageChunkMessage>> _unprocessedChunks = new();
+        private readonly ConcurrentDictionary<uint, System.Threading.CancellationTokenSource> _unprocessedChunkCts = new();
 
         public Tracker(ulong id)
         {
@@ -171,13 +173,53 @@ namespace ArgusReduxCore
                 _frameTotalSizes[packet.Header.FrameID] = packet.Header.ImageSize;
             }
             OnUpdated?.Invoke(packet);
+
+            if (_unprocessedChunks.TryRemove(packet.Header.FrameID, out var chunks))
+            {
+                if (_unprocessedChunkCts.TryRemove(packet.Header.FrameID, out var cts))
+                {
+                    cts.Cancel();
+                }
+
+                var reconstructor = _imageReconstructors.GetOrAdd(packet.Header.FrameID, (frameId) =>
+                {
+                    return new ImageReconstructor(frameId, packet.Header.ImageSize,
+                        (frameData) =>
+                        {
+                            OnFrameReceived?.Invoke(frameData);
+                            _imageReconstructors.TryRemove(frameId, out _);
+                            _frameTotalSizes.TryRemove(frameId, out _);
+                        },
+                        () =>
+                        {
+                            _imageReconstructors.TryRemove(frameId, out _);
+                            _frameTotalSizes.TryRemove(frameId, out _);
+                        });
+                });
+
+                foreach (var chunk in chunks)
+                {
+                    reconstructor.AddChunk(chunk);
+                }
+            }
         }
         public void HandleImageChunk(ImageChunkMessage chunk)
         {
             if (!_frameTotalSizes.TryGetValue(chunk.Header.FrameID, out var totalSize))
             {
-                // We don't have the total size for this frame yet, so we can't start reconstructing.
-                // We could cache the chunk here, but for now let's just drop it.
+                var chunkBag = _unprocessedChunks.GetOrAdd(chunk.Header.FrameID, (id) => {
+                    var cts = new System.Threading.CancellationTokenSource();
+                    _unprocessedChunkCts[id] = cts;
+                    Task.Delay(2000, cts.Token).ContinueWith(t => {
+                        if (!t.IsCanceled)
+                        {
+                            _unprocessedChunks.TryRemove(id, out _);
+                            _unprocessedChunkCts.TryRemove(id, out _);
+                        }
+                    });
+                    return new ConcurrentBag<ImageChunkMessage>();
+                });
+                chunkBag.Add(chunk);
                 return;
             }
             var reconstructor = _imageReconstructors.GetOrAdd(chunk.Header.FrameID, (frameId) =>
