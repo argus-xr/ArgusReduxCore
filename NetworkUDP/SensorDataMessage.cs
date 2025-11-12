@@ -10,25 +10,24 @@ namespace ArgusReduxCore.NetworkUDP
     {
         public MessageType MessageType => MessageType.SensorData;
 
-        public PacketHeader Header;
+        public SensorDataHeader Header;
         public List<IMUSample> IMUData = new();
-        public byte[]? JpegImageBytes;
 
         public ushort Length { get; private set; }
 
         public void Read(Stream stream)
         {
             Length = (ushort) stream.Length;
-            if (stream.Length < PacketHeader.Size)
+            if (stream.Length < SensorDataHeader.Size)
             {
                 Console.WriteLine("Warning: Insufficient data for PacketHeader.");
                 return;
             }
 
             // Read the header
-            byte[] headerBytes = new byte[PacketHeader.Size];
-            stream.Read(headerBytes, 0, PacketHeader.Size);
-            Header = MemoryMarshal.Read<PacketHeader>(headerBytes.AsSpan());
+            byte[] headerBytes = new byte[SensorDataHeader.Size];
+            stream.Read(headerBytes, 0, SensorDataHeader.Size);
+            Header = MemoryMarshal.Read<SensorDataHeader>(headerBytes.AsSpan());
 
             // Read the IMU samples
             for (int i = 0; i < Header.ImuCount; i++)
@@ -43,31 +42,15 @@ namespace ArgusReduxCore.NetworkUDP
                 var sample = MemoryMarshal.Read<IMUSample>(sampleBytes.AsSpan());
                 IMUData.Add(sample);
             }
-
-            // Read the JPEG image
-            if (Header.ImageSize > 0)
-            {
-                if (stream.Position + Header.ImageSize > stream.Length)
-                {
-                    Console.WriteLine("Warning: Insufficient data for JPEG image.");
-                    JpegImageBytes = null;
-                    return;
-                }
-                JpegImageBytes = new byte[Header.ImageSize];
-                stream.Read(JpegImageBytes, 0, (int)Header.ImageSize);
-            }
-            else
-            {
-                JpegImageBytes = null;
-            }
         }
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct PacketHeader
+    public struct SensorDataHeader
     {
-        public const int Size = 15;
+        public const int Size = 19;
 
+        public uint FrameID;
         public uint CameraTimestampStart;
         public uint CameraTimestampEnd;
         public ushort BatteryMv;
