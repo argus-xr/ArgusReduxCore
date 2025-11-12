@@ -5,6 +5,8 @@ using ArgusReduxCore.NetworkUDP;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 
 namespace ArgusReduxCore
 {
@@ -67,6 +69,16 @@ namespace ArgusReduxCore
                     }
                 }
             }
+            else if (message is ImageChunkMessage imageChunkMessage)
+            {
+                if (_endpointToUid.TryGetValue(remoteEndPoint, out var uid))
+                {
+                    if (_trackers.TryGetValue(uid, out var tracker))
+                    {
+                        tracker.HandleImageChunk(imageChunkMessage);
+                    }
+                }
+            }
         }
         private void HandleEndpointDisconnected(System.Net.IPEndPoint remoteEndPoint)
         {
@@ -79,14 +91,72 @@ namespace ArgusReduxCore
             }
         }
     }
+    public class ImageReconstructor
+    {
+        private readonly ConcurrentDictionary<uint, byte[]> _chunks = new();
+        private readonly uint _frameId;
+        private readonly uint _totalSize;
+        private readonly Action<byte[]> _onComplete;
+        private readonly Action _onTimeout;
+        private readonly Task _timeoutTask;
+        private readonly System.Threading.CancellationTokenSource _cancellationTokenSource = new();
+
+        public ImageReconstructor(uint frameId, uint totalSize, Action<byte[]> onComplete, Action onTimeout)
+        {
+            _frameId = frameId;
+            _totalSize = totalSize;
+            _onComplete = onComplete;
+            _onTimeout = onTimeout;
+
+            _timeoutTask = Task.Delay(2000, _cancellationTokenSource.Token).ContinueWith(t =>
+            {
+                if (!t.IsCanceled)
+                {
+                    _onTimeout();
+                }
+            });
+        }
+
+        public void AddChunk(ImageChunkMessage chunk)
+        {
+            if (chunk.Header.FrameID != _frameId || chunk.ImageChunkBytes == null)
+            {
+                return;
+            }
+
+            _chunks[chunk.Header.StartByte] = chunk.ImageChunkBytes;
+
+            if (_chunks.Values.Sum(c => c.Length) >= _totalSize) // This could get confused by duplicate chunks?
+            {
+                _cancellationTokenSource.Cancel();
+                ReconstructAndFireComplete();
+            }
+        }
+
+        private void ReconstructAndFireComplete()
+        {
+            var sortedChunks = _chunks.OrderBy(kvp => kvp.Key).Select(kvp => kvp.Value).ToArray();
+            var frameData = new byte[_totalSize];
+            int offset = 0;
+            foreach (var chunk in sortedChunks)
+            {
+                Buffer.BlockCopy(chunk, 0, frameData, offset, chunk.Length);
+                offset += chunk.Length;
+            }
+            _onComplete(frameData);
+        }
+    }
 
     public class Tracker
     {
         public ulong ID { get; }
         public event Action<SensorDataMessage>? OnUpdated;
+        public event Action<byte[]>? OnFrameReceived;
 
         private readonly object _lock = new();
         private List<SensorDataMessage> _history = new();
+        private readonly ConcurrentDictionary<uint, ImageReconstructor> _imageReconstructors = new();
+        private readonly ConcurrentDictionary<uint, uint> _frameTotalSizes = new();
 
         public Tracker(ulong id)
         {
@@ -98,8 +168,35 @@ namespace ArgusReduxCore
             lock (_lock)
             {
                 _history.Add(packet);
+                _frameTotalSizes[packet.Header.FrameID] = packet.Header.ImageSize;
             }
             OnUpdated?.Invoke(packet);
+        }
+        public void HandleImageChunk(ImageChunkMessage chunk)
+        {
+            if (!_frameTotalSizes.TryGetValue(chunk.Header.FrameID, out var totalSize))
+            {
+                // We don't have the total size for this frame yet, so we can't start reconstructing.
+                // We could cache the chunk here, but for now let's just drop it.
+                return;
+            }
+            var reconstructor = _imageReconstructors.GetOrAdd(chunk.Header.FrameID, (frameId) =>
+            {
+                return new ImageReconstructor(frameId, totalSize,
+                    (frameData) =>
+                    {
+                        OnFrameReceived?.Invoke(frameData);
+                        _imageReconstructors.TryRemove(frameId, out _);
+                        _frameTotalSizes.TryRemove(frameId, out _);
+                    },
+                    () =>
+                    {
+                        _imageReconstructors.TryRemove(frameId, out _);
+                        _frameTotalSizes.TryRemove(frameId, out _);
+                    });
+            });
+
+            reconstructor.AddChunk(chunk);
         }
 
         public IReadOnlyList<SensorDataMessage> GetHistory()

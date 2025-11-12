@@ -11,7 +11,6 @@ namespace ArgusReduxCore.NetworkUDP
         public MessageType MessageType => MessageType.ImageChunk;
 
         public ImageChunkHeader Header;
-        public List<IMUSample> IMUData = new();
         public byte[]? ImageChunkBytes;
 
         public ushort Length { get; private set; }
